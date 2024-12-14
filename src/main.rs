@@ -16,10 +16,15 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
 #[poise::command(slash_command, prefix_command)]
-async fn attachments(ctx: Context<'_>) -> Result<(), Error> {
+async fn attachments(
+    ctx: Context<'_>,
+    #[description = "ID del primer mensaje"] id: String,
+) -> Result<(), Error> {
     let mut ids: Vec<MessageId> = Vec::new();
     let builder = GetMessages::new()
-        .before(MessageId::new(1138101193730699285))
+        .before(MessageId::new(
+            id.parse().expect("Error al parsear input de usuario"),
+        ))
         .limit(100);
     let mut messages = ctx.channel_id().messages(ctx, builder).await?;
     while messages.len() > 0 {
@@ -37,16 +42,19 @@ async fn attachments(ctx: Context<'_>) -> Result<(), Error> {
     }
     let path = "ids.txt";
 
-    let mut file = File::create(path)?;
     let channel_id = ctx.channel_id();
+    let _ = guardar_ids(ids, channel_id, path);
 
+    Ok(())
+}
+fn guardar_ids(ids: Vec<MessageId>, channel_id: ChannelId, path: &str) -> Result<(), Error> {
+    let mut file = File::create(path)?;
     writeln!(file, "{}", channel_id)?;
 
     for id in ids {
         println!("{}", id.to_string());
         writeln!(file, "{}", id)?;
     }
-
     Ok(())
 }
 
@@ -135,14 +143,20 @@ fn format_date_es(timestamp: &mut String) -> String {
 }
 
 #[poise::command(slash_command, prefix_command)]
-async fn start(ctx: Context<'_>) -> Result<(), Error> {
-    let ids = fs::read_to_string("ids.txt").expect("file not found");
-    let mut ids: VecDeque<u64> = ids
+async fn start(
+    ctx: Context<'_>,
+    #[description = "ID del canal de origen"] id: String,
+) -> Result<(), Error> {
+    let directory = "ids.txt";
+    let channel_id: ChannelId =
+        ChannelId::new(id.parse().expect("Error al parsear input de usuario"));
+    generate_ids(directory, channel_id);
+    let ids = fs::read_to_string(directory).expect("file not found");
+    let ids: VecDeque<u64> = ids
         .split("\n")
         .filter(|id| !id.is_empty())
         .map(|id| id.parse().expect("Error al convertir a u64"))
         .collect();
-    let channel_id = ChannelId::new(ids.pop_front().expect("Fallo con el id del canal"));
 
     for message_id in ids {
         let message = channel_id
@@ -152,6 +166,26 @@ async fn start(ctx: Context<'_>) -> Result<(), Error> {
         let _ = send_as_user(ctx.http(), ctx.channel_id(), &message).await;
     }
     Ok(())
+}
+
+fn generate_ids(path: &str, channel_id: ChannelId) {
+    let mut ids: Vec<MessageId> = Vec::new();
+    let dir = fs::read_dir(path).expect("Error al abrir el directorio");
+    for archivo in dir {
+        let id: u64 = archivo
+            .expect("Error al acceder al archivo")
+            .file_name()
+            .into_string()
+            .expect("Error al leer el nombre del archivo")
+            .split(".")
+            .next()
+            .expect("Error al formatear el nombre del archivo")
+            .parse()
+            .expect("Error al parsear");
+        ids.push(MessageId::new(id));
+    }
+
+    let _ = guardar_ids(ids, channel_id, path);
 }
 
 #[poise::command(slash_command, prefix_command)]
